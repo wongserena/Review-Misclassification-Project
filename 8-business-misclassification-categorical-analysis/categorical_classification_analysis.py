@@ -3,17 +3,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# --- Define Constants (Global Variables) ---
+# --- Define Constants ---
+# NOTE: Verify these relative paths are correct for your system!
 MODELING_DATA_FILE = '../4-prep_model_data/data_filtered.csv' 
 MISCLASSIFICATION_FILE = '../7-deep_learning_textCNN/misclassification_analysis_textcnn.csv' 
+
 CATEGORY_PREFIX = 'Category_'
 AMBIENCE_PREFIX = 'Ambience_'
-MIN_REVIEWS_THRESHOLD = 20 # Lowered to capture more features
+MIN_REVIEWS_THRESHOLD = 20 # Lowered to ensure Ambience/Attributes with fewer reviews are included
 
-# --- Feature Selection and Mapping (CRUCIAL CORRECTION HERE) ---
-# NOTE: Ambience/Attribute names are the source of the remaining errors.
-# The code below uses the assumed correct names based on your file glimpse.
-
+# --- Feature Selection and Mapping ---
 CUISINE_MAPPINGS = {
     'Japanese': 'Category_Japanese', 'Italian': 'Category_Italian', 'Vietnamese': 'Category_Vietnamese', 
     'Mediterranean': 'Category_Mediterranean', 'Mexican': 'Category_Mexican', 'Chinese': 'Category_Chinese', 
@@ -23,13 +22,11 @@ CUISINE_MAPPINGS = {
 }
 CUISINE_COLS = list(CUISINE_MAPPINGS.values())
 
-# AMBIENCE CORRECTION: We assume these names are correct in the source data.
 AMBIENCE_COLS = ['Ambience_romantic', 'Ambience_intimate', 'Ambience_classy', 
                  'Ambience_hipster', 'Ambience_touristy', 'Ambience_trendy', 
                  'Ambience_upscale', 'Ambience_casual']
 AMBIENCE_DISPLAY_MAP = {col: col.replace(AMBIENCE_PREFIX, '').replace('_', ' ').title() for col in AMBIENCE_COLS}
 
-# ATTRIBUTE CORRECTION: We are using full/mixed case names which often appear in Yelp data.
 ATTRIBUTE_COLS = ['OutdoorSeating', 'RestaurantsDelivery', 'RestaurantsReservations', 
                   'GoodForKids', 'RestaurantsGoodForGroups', 'RestaurantsTakeOut', 
                   'WheelchairAccessible', 'HasParking', 'DriveThr', 'BusinessAcceptsCreditCards']
@@ -54,6 +51,7 @@ def calculate_feature_rates(df, feature_cols, display_map):
     present_cols = [col for col in feature_cols if col in df.columns]
 
     for col in present_cols:
+        # Crucial check: filters only where the binary feature is present (value == 1)
         df_feature = df[df[col] == 1]
         
         if not df_feature.empty:
@@ -67,6 +65,8 @@ def calculate_feature_rates(df, feature_cols, display_map):
             results.append([display_name, total_tested, rate])
 
     df_results = pd.DataFrame(results, columns=['Feature', 'Total_Reviews', 'Misclassification_Rate'])
+
+    # Filter using the defined global threshold
     df_results = df_results[df_results['Total_Reviews'] >= MIN_REVIEWS_THRESHOLD]
     return df_results.sort_values(by='Misclassification_Rate', ascending=False)
 
@@ -79,15 +79,9 @@ except FileNotFoundError as e:
     print(f"Error: Could not find one or both files at the specified path: {e}")
     exit()
 
-# --- DIAGNOSTICS: Check for Ambience/Attribute Columns ---
-# This is a self-check to see if the columns exist in your data.
-missing_cols = [col for col in AMBIENCE_COLS + ATTRIBUTE_COLS if col not in df_category_source.columns]
-if missing_cols:
-    print("\n--- WARNING: Missing Feature Columns ---")
-    print(f"The following columns were NOT found in your CSV (likely causing N/A results): {missing_cols}")
-    print("Please verify the spelling/case in your CSV header.")
-
 # --- 2. Filter, Clean, and Merge Data ---
+
+# Robust Cleaning of all Binary Features
 df_category_source = clean_binary_features(df_category_source, CUISINE_COLS + AMBIENCE_COLS + ATTRIBUTE_COLS)
 
 present_cols = ['business_id'] + [col for col in ALL_REPORT_COLS if col in df_category_source.columns]
@@ -112,25 +106,22 @@ print("\n" + "="*80)
 print("COMPREHENSIVE MISCLASSIFICATION ANALYSIS REPORT")
 print("="*80)
 
-# CUISINE ANALYSIS (Table remains the same)
+# CUISINE ANALYSIS
 print("\n>>> A. CUISINE ANALYSIS (Top 5 Most & Least Confusing)")
 if not df_cuisine_analysis.empty:
     df_top_cuisine = pd.concat([df_cuisine_analysis.head(5), df_cuisine_analysis.tail(5)]).sort_values(by='Misclassification_Rate', ascending=False)
     print(df_top_cuisine.to_markdown(index=False, floatfmt=".2%", numalign="right"))
-# ... (rest of the tabular summary remains the same) ...
+
 # AMBIENCE ANALYSIS
 print("\n>>> B. AMBIENCE ANALYSIS (How Atmosphere Affects Review Clarity)")
 if not df_ambience_analysis.empty:
     print(df_ambience_analysis.to_markdown(index=False, floatfmt=".2%", numalign="right"))
-else:
-    print("| Feature | Total_Reviews | Misclassification_Rate |\n|:---|:---|:---|\n| NO AMBIENCE DATA FOUND (Threshold too high or Column names incorrect) | | |")
 
 # ATTRIBUTE ANALYSIS
 print("\n>>> C. SERVICE ATTRIBUTE ANALYSIS (Operational Features)")
 if not df_attribute_analysis.empty:
     print(df_attribute_analysis.to_markdown(index=False, floatfmt=".2%", numalign="right"))
-else:
-    print("| Feature | Total_Reviews | Misclassification_Rate |\n|:---|:---|:---|\n| NO ATTRIBUTE DATA FOUND (Threshold too high or Column names incorrect) | | |")
+
 
 # --- 5. Enhanced Visualization (All requested graphs) ---
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -146,19 +137,17 @@ labels = ['Correctly Classified', 'Misclassified']
 colors = ['#5cb85c', '#d9534f']
 
 plt.figure(figsize=(7, 7))
-plt.pie(data, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors, wedgeprops={'edgecolor': 'black'}, pctdistance=0.8) # Adjusted for better label fit
+plt.pie(data, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors, wedgeprops={'edgecolor': 'black'})
 plt.title('Overall Model Performance Breakdown', fontsize=14)
 plt.show()
 
-# Visualization 2: Cuisine Comparison (Bar Chart - Using Hue to fix FutureWarning)
+# Visualization 2: Cuisine Comparison (Bar Chart)
 if not df_cuisine_analysis.empty:
     df_plot_cuisine = pd.concat([df_cuisine_analysis.head(5), df_cuisine_analysis.tail(5)]).sort_values(by='Misclassification_Rate', ascending=True)
-    df_plot_cuisine['Type'] = np.where(df_plot_cuisine['Misclassification_Rate'] >= 0.4, 'Most Confusing', 'Least Confusing')
     plt.figure(figsize=(14, 6))
-    sns.barplot(x='Misclassification_Rate', y='Feature', data=df_plot_cuisine, hue='Type', palette={'Most Confusing': '#E74C3C', 'Least Confusing': '#3498DB'}, dodge=False)
+    sns.barplot(x='Misclassification_Rate', y='Feature', data=df_plot_cuisine, palette='coolwarm')
     plt.title('Misclassification Rate by Cuisine (Top/Bottom 5)', fontsize=16)
     plt.xlabel('Misclassification Rate', fontsize=12)
-    plt.legend(title='')
     plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.1%}'.format(y)))
     plt.show()
 
@@ -182,6 +171,7 @@ if not df_attribute_analysis.empty:
     plt.gca().xaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.1%}'.format(y)))
     plt.show()
 
+
 # Visualization 5: Cuisine Breakdown (Pie Chart by Volume)
 if not df_cuisine_analysis.empty:
     df_pie_data = df_cuisine_analysis.sort_values(by='Total_Reviews', ascending=False).head(10)
@@ -191,20 +181,18 @@ if not df_cuisine_analysis.empty:
             labels=df_pie_data['Feature'], 
             autopct='%1.1f%%', 
             startangle=90, 
-            wedgeprops={'edgecolor': 'black'},
-            textprops={'fontsize': 10}) # Adjusted for better label fit
+            wedgeprops={'edgecolor': 'black'})
     plt.title('Top 10 Cuisines by Review Volume (Tested)', fontsize=14)
     plt.show()
 
 
-# --- 6. Top Misclassified Businesses Deep Dive (Increased to Top 20) ---
-N_TOP_BUSINESSES = 20 # Increased from 5 to 20
+# --- 6. Top Misclassified Businesses Deep Dive ---
 
-df_top_businesses = business_misclass_rate.sort_values(by='Misclassification_Rate', ascending=False).head(N_TOP_BUSINESSES)
+df_top_businesses = business_misclass_rate.sort_values(by='Misclassification_Rate', ascending=False).head(5)
 df_top_businesses_report = pd.merge(df_top_businesses, df_features, on='business_id', how='left')
 
 print("\n" + "="*80)
-print(f"TOP {N_TOP_BUSINESSES} MISCLASSIFIED BUSINESSES: WHAT ARE THEIR CHARACTERISTICS?")
+print("TOP 5 MISCLASSIFIED BUSINESSES: WHAT ARE THEIR CHARACTERISTICS?")
 print("="*80)
 
 report_rows = []
