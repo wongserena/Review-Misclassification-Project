@@ -1,13 +1,3 @@
-"""
-category_misclassification_analysis.py
-
-Corrected version:
-- Robustly converts boolean-like columns (strings 'True'/'False', '1'/'0', 'Yes'/'No', etc.) to 0/1.
-- Avoids DataFrame fragmentation by constructing converted columns and concatenating.
-- Keeps exploded cuisine mapping (business -> possibly many cuisines) and merges many-to-many.
-- Produces the same visualizations as before.
-"""
-
 import os
 from pathlib import Path
 import re
@@ -18,14 +8,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 
-# ------------------- User constants -------------------
 MODELING_DATA_FILE = '../4-prep_model_data/data_filtered.csv'
 MISCLASSIFICATION_FILE = '../7-deep_learning_textCNN/misclassification_analysis_textcnn.csv'
 
 OUT_DIR = Path("./viz_outputs")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# ------------------- Helper: cuisine grouping rules -------------------
 def infer_cuisine_group_from_colname(col_name: str) -> str:
     s = col_name.lower()
     if re.search(r"mex|taco|burrito|tex-?mex", s):
@@ -74,7 +62,6 @@ def infer_cuisine_group_from_colname(col_name: str) -> str:
         return "Specialty Food / Market"
     return "Other"
 
-# ------------------- utility: robust boolean/flag conversion -------------------
 def to_binary_series(s: pd.Series) -> pd.Series:
     """
     Convert a Series of mixed values into 0/1 ints.
@@ -103,20 +90,17 @@ def to_binary_series(s: pd.Series) -> pd.Series:
     result = result.fillna(0).astype(int)
     return result
 
-# ------------------- Load data -------------------
 print("Reading modeling data from:", MODELING_DATA_FILE)
 print("Reading misclassification data from:", MISCLASSIFICATION_FILE)
 
 df_model = pd.read_csv(MODELING_DATA_FILE, dtype=str, low_memory=False)
 df_mis = pd.read_csv(MISCLASSIFICATION_FILE, low_memory=False)
 
-# convert numeric columns in mis file if present
 numeric_cols = ["True_Star_Rating", "Predicted_Star_Rating", "stars_x"]
 for c in numeric_cols:
     if c in df_mis.columns:
         df_mis[c] = pd.to_numeric(df_mis[c], errors='coerce')
 
-# ------------------- Identify category columns -------------------
 category_cols = [c for c in df_model.columns if c.startswith("Category_")]
 print(f"Found {len(category_cols)} category columns (example): {category_cols[:10]}")
 
@@ -129,8 +113,6 @@ print("Cuisine groups discovered and number of mapped raw columns:")
 for cuisine, cols in sorted(cuisine_to_cols.items(), key=lambda x: (-len(x[1]), x[0])):
     print(f"  {cuisine:30s} : {len(cols)}")
 
-# ------------------- Service & Ambience columns (as you requested) -------------------
-# Use these if present in df_model
 service_cols = [c for c in [
     "RestaurantsDelivery", "RestaurantsTakeOut", "RestaurantsReservations",
     "WheelchairAccessible", "HasParking", "RestaurantsTableService", "RestaurantsGoodForGroups"
@@ -148,15 +130,12 @@ print("Service columns used:", service_cols)
 print("Ambience columns used:", ambience_cols)
 print("Good-for columns used:", goodfor_cols)
 
-# ------------------- Prepare business-level DataFrame with robust conversions -------------------
 cols_needed = ["business_id"] + category_cols + service_cols + ambience_cols + goodfor_cols
 available_cols = [c for c in cols_needed if c in df_model.columns]
 print(f"Using {len(available_cols)} columns from modeling data for business aggregation.")
 
-# Build df_business with only needed columns (still strings)
 df_business = df_model[available_cols].copy()
 
-# Convert flags in one pass to avoid fragmentation: build a DataFrame of converted columns
 converted = {"business_id": df_business["business_id"].copy()}
 
 # Category columns -> binary
@@ -169,14 +148,11 @@ for col in service_cols + ambience_cols + goodfor_cols:
     if col in df_business.columns:
         converted[col] = to_binary_series(df_business[col])
 
-# Concatenate converted columns into DataFrame (defragmented)
 df_business_conv = pd.DataFrame(converted)
 
-# Deduplicate businesses by taking max (so if any row has the flag, it's 1)
 df_business_agg = df_business_conv.groupby("business_id", as_index=False).max()
 print("Unique businesses after aggregation:", df_business_agg.shape[0])
 
-# Quick debug prints to verify there are non-zero ambience/service flags
 print("Ambience column sums (post-agg):")
 for c in ambience_cols:
     s = df_business_agg[c].sum() if c in df_business_agg.columns else None
@@ -187,7 +163,6 @@ for c in service_cols:
     s = df_business_agg[c].sum() if c in df_business_agg.columns else None
     print(f"  {c}: {s}")
 
-# ------------------- Create business -> cuisine membership exploded table -------------------
 rows = []
 for _, row in df_business_agg.iterrows():
     bid = row["business_id"]
@@ -203,7 +178,6 @@ for _, row in df_business_agg.iterrows():
 df_bus_cuisine = pd.DataFrame(rows)
 print("Exploded business-cuisine rows:", len(df_bus_cuisine))
 
-# ------------------- Merge misclassification rows to business categories -------------------
 # 1) Merge business attributes (one row per business) into mis dataframe
 df_merge = df_mis.merge(df_business_agg, on="business_id", how="left")
 
@@ -216,14 +190,11 @@ if "Is_Misclassified" in df_merge.columns:
     df_merge["Is_Misclassified"] = df_merge["Is_Misclassified"].astype(str).str.lower().map(
         lambda x: True if x in ("true", "1", "yes", "y") else False if x in ("false", "0", "no", "n") else np.nan)
 else:
-    # safe inference if numeric columns exist
     if "True_Star_Rating" in df_merge.columns and "Predicted_Star_Rating" in df_merge.columns:
         df_merge["Is_Misclassified"] = (df_merge["True_Star_Rating"] != df_merge["Predicted_Star_Rating"])
     else:
-        # fallback: presume not misclassified (shouldn't happen)
         df_merge["Is_Misclassified"] = False
 
-# ------------------- Per-cuisine summary stats -------------------
 grouped = df_merge.groupby("cuisine_group")
 cuisine_stats = grouped["Is_Misclassified"].agg(
     total_reviews="count",
@@ -235,11 +206,9 @@ cuisine_stats = cuisine_stats.sort_values("misclassified_count", ascending=False
 print("\nTop cuisine groups by misclassified_count:")
 print(cuisine_stats.head(15).to_string(index=False))
 
-# ------------------- Visuals -------------------
 TOP_N = 12
 top_cuisines_by_mis = cuisine_stats.sort_values("misclassified_count", ascending=False).head(TOP_N)
 
-# Bar: misclassification rate
 plt.figure(figsize=(10,6))
 x = top_cuisines_by_mis["cuisine_group"]
 y = top_cuisines_by_mis["misclassification_rate"]
@@ -256,7 +225,6 @@ plt.savefig(OUT_DIR / "misclassification_rate_by_cuisine_topN.png", dpi=150)
 plt.close()
 print("Saved:", OUT_DIR / "misclassification_rate_by_cuisine_topN.png")
 
-# Pie: share of misclassified reviews
 mis_by_cuisine = cuisine_stats.set_index("cuisine_group")["misclassified_count"].sort_values(ascending=False)
 top = mis_by_cuisine.head(TOP_N)
 others = mis_by_cuisine.iloc[TOP_N:].sum()
@@ -270,7 +238,6 @@ plt.savefig(OUT_DIR / "misclassified_share_pie_topN.png", dpi=150)
 plt.close()
 print("Saved:", OUT_DIR / "misclassified_share_pie_topN.png")
 
-# Ambience heatmap: average ambience flags for correct vs misclassified
 if ambience_cols:
     amb_df = df_merge[[*ambience_cols, "Is_Misclassified"]].copy()
     for c in ambience_cols:
@@ -291,7 +258,6 @@ if ambience_cols:
 else:
     print("No ambience columns present; skipping ambience heatmap.")
 
-# Services comparison: average availability for correct vs misclassified
 svc_cols_used = [c for c in (service_cols + goodfor_cols) if c in df_merge.columns]
 if svc_cols_used:
     svc_df = df_merge[[*svc_cols_used, "Is_Misclassified"]].copy()
@@ -316,7 +282,6 @@ if svc_cols_used:
 else:
     print("No service/goodfor columns present; skipping services comparison plot.")
 
-# ------------------- Top misclassified businesses (table) -------------------
 biz_stats = df_merge.groupby(["business_id"]).agg(
     total_reviews=("Is_Misclassified", "count"),
     misclassified_count=("Is_Misclassified", "sum")
@@ -336,7 +301,6 @@ print(top_mis_biz[["business_id", "business_name", "cuisine_group", "total_revie
 top_mis_biz.to_csv(OUT_DIR / "top_misclassified_businesses.csv", index=False)
 print("Saved:", OUT_DIR / "top_misclassified_businesses.csv")
 
-# Bar for top businesses misclassification rate
 plt.figure(figsize=(10,6))
 labels = top_mis_biz["business_name"].fillna(top_mis_biz["business_id"]).apply(lambda x: str(x)[:30])
 vals = top_mis_biz["misclassification_rate"]
@@ -350,7 +314,6 @@ plt.savefig(OUT_DIR / "top20_businesses_misclassification_rate.png", dpi=150)
 plt.close()
 print("Saved:", OUT_DIR / "top20_businesses_misclassification_rate.png")
 
-# Save cuisine summary
 cuisine_stats.sort_values("misclassified_count", ascending=False).to_csv(OUT_DIR / "cuisine_misclassification_summary.csv", index=False)
 print("Saved:", OUT_DIR / "cuisine_misclassification_summary.csv")
 
