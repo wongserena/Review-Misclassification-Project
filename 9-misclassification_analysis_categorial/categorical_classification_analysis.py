@@ -3,16 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# --- Define Constants ---
-# NOTE: Verify these relative paths are correct for your system!
 MODELING_DATA_FILE = '../4-prep_model_data/data_filtered.csv' 
 MISCLASSIFICATION_FILE = '../7-deep_learning_textCNN/misclassification_analysis_textcnn.csv' 
 
 CATEGORY_PREFIX = 'Category_'
 AMBIENCE_PREFIX = 'Ambience_'
-MIN_REVIEWS_THRESHOLD = 20 # Lowered to ensure Ambience/Attributes with fewer reviews are included
+MIN_REVIEWS_THRESHOLD = 20
 
-# --- Feature Selection and Mapping ---
 CUISINE_MAPPINGS = {
     'Japanese': 'Category_Japanese', 'Italian': 'Category_Italian', 'Vietnamese': 'Category_Vietnamese', 
     'Mediterranean': 'Category_Mediterranean', 'Mexican': 'Category_Mexican', 'Chinese': 'Category_Chinese', 
@@ -34,24 +31,18 @@ ATTRIBUTE_DISPLAY_MAP = {col: col for col in ATTRIBUTE_COLS}
 
 ALL_REPORT_COLS = CUISINE_COLS + AMBIENCE_COLS + ATTRIBUTE_COLS
 
-# --- NEW FUNCTION: Robust Data Cleaning for Binary Features (Fixes Ambience/Service) ---
 def clean_binary_features(df, cols):
     """Fills NaNs with 0 and converts binary columns to integer type (robustly)."""
     for col in cols:
         if col in df.columns:
-            # Coerce non-numeric/missing values to 0, then ensure integer type
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
     return df
 
-# --- FUNCTION: Calculate Rates with Explicit Columns ---
 def calculate_feature_rates(df, feature_cols, display_map):
-    """Calculates the weighted misclassification rate for binary features."""
-    
     results = []
     present_cols = [col for col in feature_cols if col in df.columns]
 
     for col in present_cols:
-        # Crucial check: filters only where the binary feature is present (value == 1)
         df_feature = df[df[col] == 1]
         
         if not df_feature.empty:
@@ -66,12 +57,9 @@ def calculate_feature_rates(df, feature_cols, display_map):
 
     df_results = pd.DataFrame(results, columns=['Feature', 'Total_Reviews', 'Misclassification_Rate'])
 
-    # Filter using the defined global threshold
     df_results = df_results[df_results['Total_Reviews'] >= MIN_REVIEWS_THRESHOLD]
     return df_results.sort_values(by='Misclassification_Rate', ascending=False)
 
-
-# --- 1. Load Data ---
 try:
     df_category_source = pd.read_csv(MODELING_DATA_FILE)
     df_misclass = pd.read_csv(MISCLASSIFICATION_FILE)
@@ -79,9 +67,6 @@ except FileNotFoundError as e:
     print(f"Error: Could not find one or both files at the specified path: {e}")
     exit()
 
-# --- 2. Filter, Clean, and Merge Data ---
-
-# Robust Cleaning of all Binary Features
 df_category_source = clean_binary_features(df_category_source, CUISINE_COLS + AMBIENCE_COLS + ATTRIBUTE_COLS)
 
 present_cols = ['business_id'] + [col for col in ALL_REPORT_COLS if col in df_category_source.columns]
@@ -94,40 +79,31 @@ business_misclass_rate['Misclassification_Rate'] = business_misclass_rate['Total
 df_analysis = pd.merge(df_features, business_misclass_rate, on='business_id', how='inner')
 print(f"Analysis Data merged successfully: {len(df_analysis)} unique businesses analyzed.")
 
-
-# --- 3. Run Analysis on Feature Groups ---
 df_cuisine_analysis = calculate_feature_rates(df_analysis, CUISINE_COLS, CUISINE_MAPPINGS)
 df_ambience_analysis = calculate_feature_rates(df_analysis, AMBIENCE_COLS, AMBIENCE_DISPLAY_MAP)
 df_attribute_analysis = calculate_feature_rates(df_analysis, ATTRIBUTE_COLS, ATTRIBUTE_DISPLAY_MAP)
 
-
-# --- 4. Tabular Summary and Insights ---
 print("\n" + "="*80)
 print("COMPREHENSIVE MISCLASSIFICATION ANALYSIS REPORT")
 print("="*80)
 
-# CUISINE ANALYSIS
 print("\n>>> A. CUISINE ANALYSIS (Top 5 Most & Least Confusing)")
 if not df_cuisine_analysis.empty:
     df_top_cuisine = pd.concat([df_cuisine_analysis.head(5), df_cuisine_analysis.tail(5)]).sort_values(by='Misclassification_Rate', ascending=False)
     print(df_top_cuisine.to_markdown(index=False, floatfmt=".2%", numalign="right"))
 
-# AMBIENCE ANALYSIS
 print("\n>>> B. AMBIENCE ANALYSIS (How Atmosphere Affects Review Clarity)")
 if not df_ambience_analysis.empty:
     print(df_ambience_analysis.to_markdown(index=False, floatfmt=".2%", numalign="right"))
 
-# ATTRIBUTE ANALYSIS
 print("\n>>> C. SERVICE ATTRIBUTE ANALYSIS (Operational Features)")
 if not df_attribute_analysis.empty:
     print(df_attribute_analysis.to_markdown(index=False, floatfmt=".2%", numalign="right"))
 
 
-# --- 5. Enhanced Visualization (All requested graphs) ---
 plt.style.use('seaborn-v0_8-whitegrid')
 sns.set_palette('deep')
 
-# Visualization 1: Pie Chart - Overall Model Performance
 total_reviews = df_misclass['Is_Misclassified'].count()
 misclassified_sum = df_misclass['Is_Misclassified'].sum()
 correctly_classified = total_reviews - misclassified_sum
@@ -184,9 +160,6 @@ if not df_cuisine_analysis.empty:
             wedgeprops={'edgecolor': 'black'})
     plt.title('Top 10 Cuisines by Review Volume (Tested)', fontsize=14)
     plt.show()
-
-
-# --- 6. Top Misclassified Businesses Deep Dive ---
 
 df_top_businesses = business_misclass_rate.sort_values(by='Misclassification_Rate', ascending=False).head(5)
 df_top_businesses_report = pd.merge(df_top_businesses, df_features, on='business_id', how='left')
